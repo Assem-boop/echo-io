@@ -46,7 +46,6 @@ function createCrystals(num) {
             x: Math.random() * worldWidth,
             y: Math.random() * worldHeight,
             radius: 5,
-            visible: false,
             type: Math.random() < 0.1 ? 'poison' : 'normal'
         });
     }
@@ -58,8 +57,9 @@ function createAIBlobs(num) {
             x: Math.random() * worldWidth,
             y: Math.random() * worldHeight,
             radius: 10,
-            speed: 1.5,
-            target: null
+            speed: 1.2,
+            target: null,
+            scaredTimer: 0
         });
     }
 }
@@ -70,11 +70,13 @@ createAIBlobs(10);
 function update() {
     handleMovement();
 
-    player.radius -= 0.0015;
+    // natural decay
+    player.radius -= 0.0003; // reduced decay so longer survival
     if (player.radius < 8) endGame();
 
+    // poison
     if (player.poisoned) {
-        player.radius -= 0.004;
+        player.radius -= 0.002;
         player.poisonTimer--;
         if (player.poisonTimer <= 0) player.poisoned = false;
     }
@@ -132,7 +134,10 @@ function updateAI() {
         let dx = 0, dy = 0;
         let distToPlayer = Math.hypot(player.x - blob.x, player.y - blob.y);
 
-        if (blob.radius < player.radius * 0.8 && !player.stealth) {
+        if (blob.scaredTimer > 0) {
+            blob.scaredTimer--;
+            dx = blob.x - player.x; dy = blob.y - player.y;
+        } else if (blob.radius < player.radius * 0.8 && !player.stealth) {
             dx = player.x - blob.x; dy = player.y - blob.y;
         } else if (blob.radius > player.radius * 1.2 && !player.stealth) {
             dx = blob.x - player.x; dy = blob.y - player.y;
@@ -147,11 +152,16 @@ function updateAI() {
         }
 
         if (distToPlayer < blob.radius + player.radius) {
-            if (player.shield) {
-                player.shield = false;
-            } else {
-                player.radius -= blob.radius * 0.2;
-                blob.radius += 1;
+            if (player.radius > blob.radius * 1.1) {
+                player.radius += blob.radius * 0.5;
+                aiBlobs.splice(aiBlobs.indexOf(blob), 1);
+            } else if (blob.radius > player.radius * 1.1) {
+                if (player.shield) player.shield = false;
+                else {
+                    player.radius -= blob.radius * 0.2;
+                    blob.radius += 1;
+                }
+                blob.scaredTimer = 200;
             }
         }
     });
@@ -196,8 +206,11 @@ function checkCollectCrystals() {
     for (let i=crystals.length-1; i>=0; i--) {
         let c = crystals[i];
         if (Math.hypot(c.x - player.x, c.y - player.y) < player.radius + c.radius) {
-            if (c.type==='poison') { player.radius+=2; player.poisoned=true; player.poisonTimer=600; }
-            else player.radius+=1;
+            if (c.type==='poison') {
+                player.radius+=2;
+                player.poisoned=true;
+                player.poisonTimer=600;
+            } else player.radius+=1;
             crystals.splice(i,1);
         }
     }
@@ -209,6 +222,28 @@ function updatePings() {
         pings[i].radius+=6;
         if (pings[i].radius>300) pings.splice(i,1);
     }
+}
+
+function draw() {
+    let camX=player.x-canvas.width/2, camY=player.y-canvas.height/2;
+    ctx.setTransform(1,0,0,1,-camX,-camY);
+    ctx.clearRect(camX,camY,canvas.width,canvas.height);
+
+    crystals.forEach(c=>{
+        ctx.beginPath(); ctx.arc(c.x,c.y,c.radius,0,2*Math.PI);
+        ctx.fillStyle=c.type==='poison'?'purple':'lime'; ctx.fill();
+    });
+
+    meteors.forEach(m=>{ctx.fillStyle='orange';ctx.beginPath();ctx.arc(m.x,m.y,10,0,2*Math.PI);ctx.fill();});
+    storms.forEach(s=>{ctx.fillStyle='rgba(255,0,0,0.1)';ctx.beginPath();ctx.arc(s.x,s.y,s.radius,0,2*Math.PI);ctx.fill();});
+    aiBlobs.forEach(b=>{ctx.fillStyle='red';ctx.beginPath();ctx.arc(b.x,b.y,b.radius,0,2*Math.PI);ctx.fill();});
+    minions.forEach(m=>{ctx.fillStyle='white';ctx.beginPath();ctx.arc(m.x,m.y,3,0,2*Math.PI);ctx.fill();});
+    ctx.fillStyle=player.poisoned?'pink':(player.stealth?'rgba(255,255,255,0.3)':'white');
+    ctx.beginPath(); ctx.arc(player.x,player.y,player.radius,0,2*Math.PI); ctx.fill();
+
+    drawFog(camX, camY);
+    drawMiniMap();
+    drawUI();
 }
 
 function drawFog(camX, camY) {
@@ -232,42 +267,19 @@ function drawMiniMap() {
     ctx.strokeStyle='white';
     ctx.strokeRect(canvas.width-160,10,150,150);
 
-    function drawDot(x,y,color,r=2) {
+    function dot(x,y,color,r=2) {
         ctx.beginPath(); ctx.arc(canvas.width-160+x*scale,10+y*scale,r,0,2*Math.PI);
         ctx.fillStyle=color; ctx.fill();
     }
 
-    crystals.forEach(c=> drawDot(c.x,c.y,'lime'));
-    aiBlobs.forEach(b=> drawDot(b.x,b.y,'red'));
-    meteors.forEach(m=> drawDot(m.x,m.y,'orange'));
-    storms.forEach(s=> drawDot(s.x,s.y,'rgba(255,0,0,0.5)',4));
-    drawDot(player.x,player.y,'white',3);
+    crystals.forEach(c=> dot(c.x,c.y,'lime'));
+    aiBlobs.forEach(b=> dot(b.x,b.y,'red'));
+    meteors.forEach(m=> dot(m.x,m.y,'orange'));
+    storms.forEach(s=> dot(s.x,s.y,'rgba(255,0,0,0.5)',4));
+    dot(player.x,player.y,'white',3);
 }
 
-function draw() {
-    let camX=player.x-canvas.width/2, camY=player.y-canvas.height/2;
-    ctx.setTransform(1,0,0,1,-camX,-camY);
-    ctx.clearRect(camX,camY,canvas.width,canvas.height);
-
-    crystals.forEach(c=>{
-        ctx.beginPath(); ctx.arc(c.x,c.y,c.radius,0,2*Math.PI);
-        ctx.fillStyle=c.type==='poison'?'purple':'lime'; ctx.fill();
-    });
-
-    meteors.forEach(m=>{ctx.fillStyle='orange';ctx.beginPath();ctx.arc(m.x,m.y,10,0,2*Math.PI);ctx.fill();});
-    storms.forEach(s=>{ctx.fillStyle='rgba(255,0,0,0.1)';ctx.beginPath();ctx.arc(s.x,s.y,s.radius,0,2*Math.PI);ctx.fill();});
-
-    aiBlobs.forEach(b=>{ctx.fillStyle='red';ctx.beginPath();ctx.arc(b.x,b.y,b.radius,0,2*Math.PI);ctx.fill();});
-    minions.forEach(m=>{ctx.fillStyle='white';ctx.beginPath();ctx.arc(m.x,m.y,3,0,2*Math.PI);ctx.fill();});
-    ctx.fillStyle=player.poisoned?'pink':(player.stealth?'rgba(255,255,255,0.3)':'white');
-    ctx.beginPath(); ctx.arc(player.x,player.y,player.radius,0,2*Math.PI); ctx.fill();
-
-    drawFog(camX, camY);
-
-    ctx.setTransform(1,0,0,1,0,0);
-    drawMiniMap();
-
-    // UI
+function drawUI() {
     ctx.fillStyle='white';
     ctx.fillRect(20,20,200,20);
     ctx.fillStyle='green';
@@ -283,9 +295,7 @@ function endGame(){
     cancelAnimationFrame(animHandle);
 }
 
-function restartGame(){
-    location.reload();
-}
+function restartGame(){ location.reload(); }
 
 let animHandle;
 function gameLoop(){ update(); draw(); animHandle=requestAnimationFrame(gameLoop); }
