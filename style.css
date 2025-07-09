@@ -2,7 +2,28 @@ body {
     margin: 0;
     overflow: hidden;
     background: black;
+    color: white;
+    font-family: monospace;
 }
 canvas {
     display: block;
+}
+#gameOver {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+#gameOver h1 {
+    font-size: 48px;
+    margin: 20px;
+}
+#gameOver button {
+    font-size: 24px;
+    padding: 10px 30px;
+    cursor: pointer;
 }
