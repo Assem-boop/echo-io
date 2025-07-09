@@ -1,4 +1,3 @@
-// Get canvas & context
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
@@ -10,27 +9,47 @@ window.addEventListener('resize', () => {
     canvas.height = window.innerHeight;
 });
 
-// Player object
+// Constants
+const WORLD_WIDTH = 4000;
+const WORLD_HEIGHT = 4000;
+
+// Player
 const player = {
-    x: canvas.width / 2,
-    y: canvas.height / 2,
-    radius: 10,
-    speed: 3,
-    dx: 0,
-    dy: 0
+    x: WORLD_WIDTH / 2,
+    y: WORLD_HEIGHT / 2,
+    radius: 20,
+    speed: 0,
+    angle: 0,
+    vx: 0,
+    vy: 0
 };
 
-// Handle keyboard input
 const keys = {};
-window.addEventListener('keydown', (e) => {
-    keys[e.key.toLowerCase()] = true;
-    if (e.key === ' ' || e.code === 'Space') {
-        createPing(player.x, player.y);
-    }
-});
-window.addEventListener('keyup', (e) => {
-    keys[e.key.toLowerCase()] = false;
-});
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+// Crystals
+const crystals = [];
+for (let i = 0; i < 100; i++) {
+    crystals.push({
+        x: Math.random() * WORLD_WIDTH,
+        y: Math.random() * WORLD_HEIGHT,
+        radius: 5,
+        visible: false
+    });
+}
+
+// AI blobs
+const aiBlobs = [];
+for (let i = 0; i < 15; i++) {
+    aiBlobs.push({
+        x: Math.random() * WORLD_WIDTH,
+        y: Math.random() * WORLD_HEIGHT,
+        radius: 15,
+        speed: 1.2,
+        target: null
+    });
+}
 
 // Pings
 const pings = [];
@@ -38,89 +57,51 @@ function createPing(x, y) {
     pings.push({ x, y, radius: 0, maxRadius: 300, alpha: 1 });
 }
 
-// Crystals
-const crystals = [];
-function createCrystals(num) {
-    for (let i = 0; i < num; i++) {
-        crystals.push({
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height,
-            radius: 5,
-            visible: false
-        });
-    }
-}
-createCrystals(50);
+// Mini-map
+const mapSize = 200;
 
-// AI blobs
-const aiBlobs = [];
-function createAIBlobs(num) {
-    for (let i = 0; i < num; i++) {
-        aiBlobs.push({
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height,
-            radius: 10,
-            speed: 1.5,
-            target: null
-        });
-    }
-}
-createAIBlobs(5);
-
-// Timers for crystal respawn
-let crystalSpawnTimer = 0;
-let crystalSpawnInterval = 120; // ~2 seconds
+// Health and score
+let score = 0;
+let gameOver = false;
 
 // Update
 function update() {
-    player.dx = 0;
-    player.dy = 0;
-    if (keys['w'] || keys['arrowup'])    player.dy = -player.speed;
-    if (keys['s'] || keys['arrowdown'])  player.dy = player.speed;
-    if (keys['a'] || keys['arrowleft'])  player.dx = -player.speed;
-    if (keys['d'] || keys['arrowright']) player.dx = player.speed;
+    if (gameOver) return;
 
-    player.x += player.dx;
-    player.y += player.dy;
+    // Handle input & velocity with inertia
+    let acc = 0.4 * (1 - (player.radius - 20) / 80); // slower when bigger
+    if (keys['w'] || keys['arrowup'])    player.vy -= acc;
+    if (keys['s'] || keys['arrowdown'])  player.vy += acc;
+    if (keys['a'] || keys['arrowleft'])  player.vx -= acc;
+    if (keys['d'] || keys['arrowright']) player.vx += acc;
+
+    // Friction
+    player.vx *= 0.9;
+    player.vy *= 0.9;
+
+    player.x += player.vx;
+    player.y += player.vy;
+
+    // Clamp to world
+    player.x = Math.max(0, Math.min(WORLD_WIDTH, player.x));
+    player.y = Math.max(0, Math.min(WORLD_HEIGHT, player.y));
 
     updatePings();
     updateAIBlobs();
     checkPingCrystalReveal();
     checkPlayerCollectCrystal();
+    checkAICollidePlayer();
 
-    // spawn new crystals over time
-    crystalSpawnTimer++;
-    if (crystalSpawnTimer >= crystalSpawnInterval) {
-        createCrystals(1);
-        crystalSpawnTimer = 0;
-    }
-
-    // shrink player slowly
-    player.radius -= 0.01;
-    if (player.radius < 10) player.radius = 10;
+    player.radius -= 0.005;
+    if (player.radius < 5) gameOver = true;
 }
 
 function updatePings() {
     for (let i = pings.length - 1; i >= 0; i--) {
-        const ping = pings[i];
-        ping.radius += 4;
-        ping.alpha = 1 - (ping.radius / ping.maxRadius);
-
-        // PUSH AI BLOBS
-        aiBlobs.forEach(blob => {
-            const dx = blob.x - ping.x;
-            const dy = blob.y - ping.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < ping.radius + blob.radius && dist > 0) {
-                const pushStrength = (1 - dist / ping.maxRadius) * 3;
-                blob.x += (dx / dist) * pushStrength;
-                blob.y += (dy / dist) * pushStrength;
-            }
-        });
-
-        if (ping.radius >= ping.maxRadius) {
-            pings.splice(i, 1);
-        }
+        const p = pings[i];
+        p.radius += 4;
+        p.alpha = 1 - p.radius / p.maxRadius;
+        if (p.radius > p.maxRadius) pings.splice(i, 1);
     }
 }
 
@@ -132,118 +113,145 @@ function updateAIBlobs() {
         if (blob.target) {
             const dx = blob.target.x - blob.x;
             const dy = blob.target.y - blob.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const dist = Math.sqrt(dx*dx + dy*dy);
             if (dist > 1) {
                 blob.x += (dx / dist) * blob.speed;
                 blob.y += (dy / dist) * blob.speed;
             }
         }
     });
-
-    checkAICollectCrystal();
 }
 
-// Reveal crystals when ping hits them
 function checkPingCrystalReveal() {
     crystals.forEach(crystal => {
         pings.forEach(ping => {
             const dx = crystal.x - ping.x;
             const dy = crystal.y - ping.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < ping.radius) {
+            if (Math.sqrt(dx*dx + dy*dy) < ping.radius) {
                 crystal.visible = true;
             }
         });
     });
 }
 
-// Player collects crystals
 function checkPlayerCollectCrystal() {
     for (let i = crystals.length - 1; i >= 0; i--) {
-        const crystal = crystals[i];
-        const dx = crystal.x - player.x;
-        const dy = crystal.y - player.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance < player.radius + crystal.radius) {
+        const c = crystals[i];
+        const dx = player.x - c.x;
+        const dy = player.y - c.y;
+        if (Math.sqrt(dx*dx + dy*dy) < player.radius + c.radius) {
             crystals.splice(i, 1);
-            player.radius += 1;
-            player.radius = Math.min(player.radius, 50);
+            player.radius += 0.8;
+            score++;
         }
     }
 }
 
-// AI collects crystals
-function checkAICollectCrystal() {
+function checkAICollidePlayer() {
     aiBlobs.forEach(blob => {
-        for (let i = crystals.length - 1; i >= 0; i--) {
-            const crystal = crystals[i];
-            const dx = crystal.x - blob.x;
-            const dy = crystal.y - blob.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < blob.radius + crystal.radius) {
-                crystals.splice(i, 1);
-                blob.radius += 1;
-                blob.radius = Math.min(blob.radius, 50);
-            }
+        const dx = player.x - blob.x;
+        const dy = player.y - blob.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < player.radius + blob.radius) {
+            // Damage depends on blob size
+            player.radius -= 0.02 * blob.radius;
+            if (player.radius < 5) gameOver = true;
         }
     });
 }
 
-// Draw everything
+// Draw
 function draw() {
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Camera transform
+    const zoom = 1.2;
+    ctx.setTransform(zoom, 0, 0, zoom, canvas.width/2 - player.x*zoom, canvas.height/2 - player.y*zoom);
 
-    // pings
-    pings.forEach(ping => {
-        ctx.beginPath();
-        ctx.arc(ping.x, ping.y, ping.radius, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(0, 255, 255, ${ping.alpha})`;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-    });
+    // Background
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // crystals
-    crystals.forEach(crystal => {
-        if (crystal.visible) {
+    // Crystals
+    crystals.forEach(c => {
+        if (c.visible) {
             ctx.beginPath();
-            ctx.arc(crystal.x, crystal.y, crystal.radius, 0, Math.PI * 2);
+            ctx.arc(c.x, c.y, c.radius, 0, Math.PI*2);
             ctx.fillStyle = 'lime';
             ctx.fill();
         }
     });
 
-    // ai blobs with glow
-    aiBlobs.forEach(blob => {
-        // glow
+    // Pings
+    pings.forEach(p => {
         ctx.beginPath();
-        ctx.arc(blob.x, blob.y, blob.radius + 8, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255, 0, 0, 0.1)';
-        ctx.fill();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI*2);
+        ctx.strokeStyle = `rgba(0,255,255,${p.alpha})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    });
 
-        // blob
+    // AI blobs
+    aiBlobs.forEach(blob => {
         ctx.beginPath();
-        ctx.arc(blob.x, blob.y, blob.radius, 0, Math.PI * 2);
+        ctx.arc(blob.x, blob.y, blob.radius, 0, Math.PI*2);
         ctx.fillStyle = 'red';
         ctx.fill();
     });
 
-    // player with glow
+    // Player
     ctx.beginPath();
-    ctx.arc(player.x, player.y, player.radius + 10, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+    ctx.arc(player.x, player.y, player.radius, 0, Math.PI*2);
     ctx.fillStyle = 'white';
     ctx.fill();
+
+    // UI (fixed screen)
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.fillStyle = 'white';
+    ctx.font = '18px monospace';
+    ctx.fillText(`Score: ${score}`, 20, 30);
+
+    // Health bar
+    ctx.fillStyle = 'gray';
+    ctx.fillRect(20, 40, 120, 10);
+    ctx.fillStyle = 'lime';
+    let healthRatio = (player.radius - 5) / (80 - 5);
+    ctx.fillRect(20, 40, 120 * healthRatio, 10);
+
+    // Mini-map
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(canvas.width - mapSize - 20, 20, mapSize, mapSize);
+
+    aiBlobs.forEach(blob => {
+        ctx.beginPath();
+        ctx.arc(canvas.width - mapSize - 20 + blob.x * mapSize / WORLD_WIDTH,
+                20 + blob.y * mapSize / WORLD_HEIGHT, 2, 0, Math.PI*2);
+        ctx.fillStyle = 'red';
+        ctx.fill();
+    });
+
+    ctx.beginPath();
+    ctx.arc(canvas.width - mapSize - 20 + player.x * mapSize / WORLD_WIDTH,
+            20 + player.y * mapSize / WORLD_HEIGHT, 3, 0, Math.PI*2);
+    ctx.fillStyle = 'white';
+    ctx.fill();
+
+    if (gameOver) {
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle = 'white';
+        ctx.font = '48px monospace';
+        ctx.fillText("GAME OVER", canvas.width/2 - 140, canvas.height/2);
+    }
 }
 
-// Game loop
-function gameLoop() {
+// Loop
+function loop() {
     update();
     draw();
-    requestAnimationFrame(gameLoop);
+    requestAnimationFrame(loop);
 }
-gameLoop();
+loop();
+
+// Mouse click creates pings
+canvas.addEventListener('click', e => {
+    createPing(player.x, player.y);
+});
