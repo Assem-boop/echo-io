@@ -92,7 +92,7 @@ function update() {
     checkPlayerCollectCrystal();
     checkAICollidePlayer();
 
-    player.radius -= 0.005;
+    player.radius -= 0.002;
     if (player.radius < 5) gameOver = true;
 }
 
