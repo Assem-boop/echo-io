@@ -11,32 +11,30 @@ window.addEventListener('resize', () => {
 const worldWidth = 3000;
 const worldHeight = 3000;
 
+// Player setup
 const player = {
     x: worldWidth / 2,
     y: worldHeight / 2,
-    radius: 10,
-    speed: 3,
+    radius: 12, // start slightly bigger
+    speed: 9,   // slightly faster base speed
     stealth: false,
     stealthTimer: 0,
     poisoned: false,
     poisonTimer: 0,
     shield: false,
     dashTimer: 0,
-    health: 100
+    pingCooldown: 0
 };
 
 const keys = {};
 window.addEventListener('keydown', e => {
     keys[e.key.toLowerCase()] = true;
-    if ((e.key === ' ' || e.code === 'Space') && !keys['__pinged']) {
+    if ((e.key === ' ' || e.code === 'Space') && player.pingCooldown <= 0) {
         createPing(player.x, player.y);
-        keys['__pinged'] = true;
+        player.pingCooldown = 40; // faster ping (heartbeat)
     }
 });
-window.addEventListener('keyup', e => {
-    keys[e.key.toLowerCase()] = false;
-    if (e.key === ' ' || e.code === 'Space') keys['__pinged'] = false;
-});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
 const pings = [];
 const crystals = [];
@@ -44,7 +42,9 @@ const aiBlobs = [];
 const minions = [];
 const meteors = [];
 const storms = [];
+const pingTargets = [];
 
+// Create initial world
 function createCrystals(num) {
     while (crystals.length < num) {
         crystals.push({
@@ -61,30 +61,29 @@ function createAIBlobs(num) {
         aiBlobs.push({
             x: Math.random() * worldWidth,
             y: Math.random() * worldHeight,
-            radius: 10 + Math.random() * 5,
-            speed: 1.2,
+            radius: 10 + Math.random() * 8,
+            speed: 1.5,
             target: null,
-            scaredTimer: 0,
-            idleTimer: Math.random() * 200,
+            idleTimer: 50 + Math.random() * 200,
             idleX: 0,
-            idleY: 0
+            idleY: 0,
+            scaredTimer: 0,
+            pingReactionTimer: 0
         });
     }
 }
 
-createCrystals(50);
-createAIBlobs(10);
+createCrystals(80);
+createAIBlobs(20);
 
 function update() {
     handleMovement();
-
-    // natural decay - much slower now
-    player.radius -= 0.0001;
+    if (player.pingCooldown > 0) player.pingCooldown--;
+    player.radius -= 0.00005; // slower natural shrink
     if (player.radius < 8) endGame();
 
-    // poison effect - now properly balanced
     if (player.poisoned) {
-        player.radius -= 0.001;
+        player.radius -= 0.0008;
         player.poisonTimer--;
         if (player.poisonTimer <= 0) player.poisoned = false;
     }
@@ -93,10 +92,11 @@ function update() {
     updateHazards();
     updateMinions();
     updatePings();
+    updatePingTargets();
     checkCollectCrystals();
 
-    createCrystals(50);
-    createAIBlobs(10);
+    createCrystals(80);
+    createAIBlobs(20);
 }
 
 function handleMovement() {
@@ -109,15 +109,7 @@ function handleMovement() {
     let len = Math.hypot(dx, dy);
     if (len) { dx /= len; dy /= len; }
 
-    // Base speed is now 4 (increased from 3)
-    // Speed scales inversely with size using a smoother curve
-    const baseSpeed = 8;
-    const minSpeed = 1.5; // Minimum speed when very large
-    const speedScale = Math.max(minSpeed, baseSpeed * (8 / player.radius));
-    
-    let moveSpeed = speedScale;
-    
-    // Dash gives a bigger boost now (3x instead of 2x)
+    let moveSpeed = player.speed * Math.max(0.8, (12 / player.radius));
     if (player.dashTimer > 0) {
         moveSpeed *= 3;
         player.dashTimer--;
@@ -131,59 +123,57 @@ function handleMovement() {
 
     if (!dx && !dy) {
         player.stealthTimer++;
-        if (player.stealthTimer > 120) player.stealth = true;
+        if (player.stealthTimer > 100) player.stealth = true;
     } else {
         player.stealth = false;
         player.stealthTimer = 0;
     }
 
     if (player.radius >= 20 && keys['shift']) player.dashTimer = 30;
-    if (player.radius >= 40 && !player.shield) player.shield = true;
+    if (player.radius >= 35 && !player.shield) player.shield = true;
 }
-
 function updateAI() {
     aiBlobs.forEach(blob => {
-        // Idle behavior when not targeting
         blob.idleTimer--;
         if (blob.idleTimer <= 0) {
-            blob.idleTimer = 100 + Math.random() * 200;
-            blob.idleX = (Math.random() - 0.5) * 100;
-            blob.idleY = (Math.random() - 0.5) * 100;
+            blob.idleTimer = 80 + Math.random() * 200;
+            blob.idleX = (Math.random() - 0.5) * 200;
+            blob.idleY = (Math.random() - 0.5) * 200;
         }
 
-        let dx = 0, dy = 0;
-        let distToPlayer = Math.hypot(player.x - blob.x, player.y - blob.y);
-
-        if (blob.scaredTimer > 0) {
-            // Run away if scared
-            blob.scaredTimer--;
-            dx = blob.x - player.x; 
-            dy = blob.y - player.y;
-        } else if (distToPlayer < 300 && !player.stealth) {
-            // Only react to player when close enough
-            if (blob.radius < player.radius * 0.8) {
-                // Smaller blobs run away
-                dx = blob.x - player.x; 
-                dy = blob.y - player.y;
-            } else if (blob.radius > player.radius * 1.2) {
-                // Larger blobs chase
-                dx = player.x - blob.x; 
-                dy = player.y - blob.y;
-            } else {
-                // Similar size - random behavior
-                if (Math.random() < 0.1) {
-                    dx = player.x - blob.x; 
-                    dy = player.y - blob.y;
-                } else if (!blob.target || Math.random() < 0.05) {
-                    blob.target = crystals[Math.floor(Math.random() * crystals.length)];
+        blob.pingReactionTimer--;
+        if (blob.pingReactionTimer <= 0) {
+            for (const ping of pings) {
+                if (Math.hypot(blob.x - ping.x, blob.y - ping.y) < 300) {
+                    blob.pingReactionTimer = 80;
+                    break;
                 }
             }
+        }
+
+        // AI strategy
+        let dx = 0, dy = 0;
+        let closestPrey = null, closestDist = Infinity;
+        aiBlobs.forEach(other => {
+            if (other !== blob && blob.radius > other.radius * 1.2) {
+                const d = Math.hypot(blob.x - other.x, blob.y - other.y);
+                if (d < closestDist) { closestDist = d; closestPrey = other; }
+            }
+        });
+
+        if (closestPrey && closestDist < 200) {
+            dx = closestPrey.x - blob.x;
+            dy = closestPrey.y - blob.y;
+        } else if (blob.radius < player.radius * 0.8 && !player.stealth) {
+            dx = blob.x - player.x;
+            dy = blob.y - player.y;
+        } else if (blob.radius > player.radius * 1.2 && !player.stealth) {
+            dx = player.x - blob.x;
+            dy = player.y - blob.y;
         } else if (blob.target) {
-            // Go after crystals
-            dx = blob.target.x - blob.x; 
+            dx = blob.target.x - blob.x;
             dy = blob.target.y - blob.y;
         } else {
-            // Idle wandering
             dx = blob.idleX;
             dy = blob.idleY;
         }
@@ -194,52 +184,62 @@ function updateAI() {
             blob.y += (dy / dist) * blob.speed;
         }
 
-        // Collision handling - much more balanced now
-        if (distToPlayer < blob.radius + player.radius) {
+        // Eating other blobs
+        aiBlobs.forEach(other => {
+            if (other !== blob && Math.hypot(blob.x - other.x, blob.y - other.y) < blob.radius + other.radius) {
+                if (blob.radius > other.radius * 1.2) {
+                    blob.radius += other.radius * 0.3;
+                    aiBlobs.splice(aiBlobs.indexOf(other), 1);
+                }
+            }
+        });
+
+        // Collide with player
+        let dPlayer = Math.hypot(player.x - blob.x, player.y - blob.y);
+        if (dPlayer < player.radius + blob.radius) {
             if (player.radius > blob.radius * 1.2) {
-                // Player can eat smaller blobs
                 player.radius += blob.radius * 0.3;
                 aiBlobs.splice(aiBlobs.indexOf(blob), 1);
             } else if (blob.radius > player.radius * 1.2) {
-                // Larger blobs damage player
-                if (player.shield) {
-                    player.shield = false;
-                    blob.scaredTimer = 100;
-                } else {
-                    player.radius -= blob.radius * 0.1;
-                    blob.radius += 0.5;
-                    blob.scaredTimer = 60;
-                }
-            } else {
-                // Similar size - bounce off each other
-                const pushForce = 2;
-                blob.x += (blob.x - player.x) / dist * pushForce;
-                blob.y += (blob.y - player.y) / dist * pushForce;
+                if (player.shield) player.shield = false;
+                else player.radius -= blob.radius * 0.1;
+                blob.scaredTimer = 100;
             }
         }
     });
 }
-
 function updateHazards() {
     if (Math.random() < 0.002) {
-        meteors.push({ x: Math.random() * worldWidth, y: -50, dx: (Math.random()-0.5)*10, dy: Math.random()*5+2 });
+        meteors.push({
+            x: Math.random() * worldWidth,
+            y: -50,
+            dx: (Math.random()-0.5)*10,
+            dy: Math.random()*5+2
+        });
     }
     if (Math.random() < 0.0005) {
-        storms.push({ x: Math.random()*worldWidth, y: Math.random()*worldHeight, radius: 200, dx: (Math.random()-0.5)*2, dy: (Math.random()-0.5)*2 });
+        storms.push({
+            x: Math.random()*worldWidth,
+            y: Math.random()*worldHeight,
+            radius: 200,
+            dx: (Math.random()-0.5)*2,
+            dy: (Math.random()-0.5)*2
+        });
     }
 
     meteors.forEach((m, i) => {
         m.x += m.dx; m.y += m.dy;
         if (Math.hypot(player.x - m.x, player.y - m.y) < player.radius+10) {
-            player.radius -= 0.3;
-            if (Math.random() < 0.3) meteors.splice(i, 1);
+            player.radius -= 0.4;
+            meteors.splice(i, 1);
         }
         if (m.y > worldHeight + 50) meteors.splice(i, 1);
     });
-    
+
     storms.forEach((s, i) => {
         s.x += s.dx; s.y += s.dy;
-        if (Math.hypot(player.x - s.x, player.y - s.y) < s.radius) player.radius -= 0.05;
+        if (Math.hypot(player.x - s.x, player.y - s.y) < s.radius)
+            player.radius -= 0.05;
         if (Math.random() < 0.005) storms.splice(i, 1);
     });
 }
@@ -249,19 +249,20 @@ function updateMinions() {
     if (player.radius >= 25) {
         for (let i=0; i<3; i++) {
             let angle = (performance.now()/500 + i*2*Math.PI/3);
-            minions.push({ 
-                x: player.x + Math.cos(angle)*(player.radius+15), 
-                y: player.y + Math.sin(angle)*(player.radius+15) 
+            minions.push({
+                x: player.x + Math.cos(angle)*(player.radius+15),
+                y: player.y + Math.sin(angle)*(player.radius+15)
             });
         }
     }
+
     aiBlobs.forEach(blob => {
         minions.forEach(minion => {
             let dx = blob.x - minion.x, dy = blob.y - minion.y;
-            let d = Math.hypot(dx,dy);
-            if (d < 20) { 
-                blob.x += (dx/d)*2; 
-                blob.y += (dy/d)*2; 
+            let d = Math.hypot(dx, dy);
+            if (d < 20) {
+                blob.x += (dx/d)*2;
+                blob.y += (dy/d)*2;
             }
         });
     });
@@ -274,7 +275,7 @@ function checkCollectCrystals() {
             if (c.type==='poison') {
                 player.radius += 2;
                 player.poisoned = true;
-                player.poisonTimer = 300; // Reduced poison duration
+                player.poisonTimer = 300;
             } else {
                 player.radius += 1;
             }
@@ -282,115 +283,129 @@ function checkCollectCrystals() {
         }
     }
 }
-
-// --- NEW PING SYSTEM ---
-// Each ping is an expanding, fading, colored ring with a ripple effect
-function createPing(x, y) {
+function createPing(x,y) {
     pings.push({
-        x,
-        y,
-        age: 0,
-        maxAge: 60, // frames
-        color: 'rgba(0,255,255,0.6)'
+        x, y,
+        radius: 5,
+        maxRadius: 300,
+        alpha: 1,
+        duration: 60, // faster heartbeat
+        waveWidth: 4
     });
-    // Optionally, play a ping sound here
-    // new Audio('ping.mp3').play();
+    pingTargets.push({ x, y, timer: 300 });
+    aiBlobs.forEach(blob => {
+        if (Math.hypot(blob.x - x, blob.y - y) < 300) {
+            blob.pingReactionTimer = 80;
+        }
+    });
 }
 
 function updatePings() {
     for (let i = pings.length - 1; i >= 0; i--) {
-        pings[i].age++;
-        if (pings[i].age > pings[i].maxAge) pings.splice(i, 1);
+        const ping = pings[i];
+        ping.radius += 8;
+        ping.duration--;
+        if (ping.duration <= 0) pings.splice(i, 1);
     }
 }
 
-function draw() {
-    let camX = player.x-canvas.width/2, camY = player.y-canvas.height/2;
-    ctx.setTransform(1,0,0,1,-camX,-camY);
-    ctx.clearRect(camX,camY,canvas.width,canvas.height);
+function updatePingTargets() {
+    for (let i = pingTargets.length - 1; i >= 0; i--) {
+        pingTargets[i].timer--;
+        if (pingTargets[i].timer <= 0) pingTargets.splice(i, 1);
+    }
+}
 
-    // Draw crystals
+// Draw everything
+function draw() {
+    let camX = player.x - canvas.width / 2;
+    let camY = player.y - canvas.height / 2;
+    ctx.setTransform(1, 0, 0, 1, -camX, -camY);
+    ctx.clearRect(camX, camY, canvas.width, canvas.height);
+
     crystals.forEach(c => {
-        ctx.beginPath(); 
-        ctx.arc(c.x, c.y, c.radius, 0, 2*Math.PI);
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.radius, 0, 2 * Math.PI);
         ctx.fillStyle = c.type==='poison' ? '#aa00ff' : '#00ff00';
         ctx.fill();
     });
 
-    // Draw meteors
     meteors.forEach(m => {
         ctx.fillStyle = '#ff8800';
         ctx.beginPath();
-        ctx.arc(m.x, m.y, 10, 0, 2*Math.PI);
+        ctx.arc(m.x, m.y, 10, 0, 2 * Math.PI);
         ctx.fill();
     });
 
-    // Draw storms
     storms.forEach(s => {
         ctx.fillStyle = 'rgba(255,0,0,0.1)';
         ctx.beginPath();
-        ctx.arc(s.x, s.y, s.radius, 0, 2*Math.PI);
+        ctx.arc(s.x, s.y, s.radius, 0, 2 * Math.PI);
         ctx.fill();
     });
 
-    // Draw AI blobs
     aiBlobs.forEach(b => {
-        ctx.fillStyle = b.scaredTimer > 0 ? '#ff9999' : '#ff0000';
+        ctx.fillStyle = b.scaredTimer>0 ? '#ff9999' : '#ff0000';
         ctx.beginPath();
-        ctx.arc(b.x, b.y, b.radius, 0, 2*Math.PI);
+        ctx.arc(b.x, b.y, b.radius, 0, 2 * Math.PI);
         ctx.fill();
     });
 
-    // Draw minions
     minions.forEach(m => {
         ctx.fillStyle = 'rgba(255,255,255,0.8)';
         ctx.beginPath();
-        ctx.arc(m.x, m.y, 4, 0, 2*Math.PI);
+        ctx.arc(m.x, m.y, 4, 0, 2 * Math.PI);
         ctx.fill();
     });
 
-    // Draw player with proper stealth effect
     if (player.stealth) {
         ctx.fillStyle = 'rgba(255,255,255,0.3)';
         ctx.beginPath();
-        ctx.arc(player.x, player.y, player.radius, 0, 2*Math.PI);
+        ctx.arc(player.x, player.y, player.radius, 0, 2 * Math.PI);
         ctx.fill();
-        
-        // Stealth shimmer effect
-        if (Math.random() < 0.1) {
-            ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(player.x, player.y, player.radius + 2, 0, 2*Math.PI);
-            ctx.stroke();
-        }
     } else {
         ctx.fillStyle = player.poisoned ? '#ff66ff' : '#ffffff';
         ctx.beginPath();
-        ctx.arc(player.x, player.y, player.radius, 0, 2*Math.PI);
+        ctx.arc(player.x, player.y, player.radius, 0, 2 * Math.PI);
         ctx.fill();
-        
-        // Draw shield if active
-        if (player.shield) {
-            ctx.strokeStyle = '#00ffff';
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(player.x, player.y, player.radius + 3, 0, 2*Math.PI);
-            ctx.stroke();
-        }
     }
 
+    if (player.shield) {
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.radius+3, 0, 2 * Math.PI);
+        ctx.stroke();
+    }
+
+    pings.forEach(ping => {
+        const progress = 1 - (ping.duration / 60);
+        const currentRadius = ping.radius + (ping.maxRadius - ping.radius) * progress;
+        const alpha = ping.alpha * (1 - progress);
+
+        ctx.strokeStyle = `rgba(100,200,255,${alpha})`;
+        ctx.lineWidth = ping.waveWidth;
+        ctx.beginPath();
+        ctx.arc(ping.x, ping.y, currentRadius, 0, 2 * Math.PI);
+        ctx.stroke();
+    });
+
+    pingTargets.forEach(target => {
+        const pulse = Math.sin(performance.now()/150)*3 + 8;
+        ctx.fillStyle = `rgba(100,200,255,${target.timer/300})`;
+        ctx.beginPath();
+        ctx.arc(target.x, target.y, pulse, 0, 2 * Math.PI);
+        ctx.fill();
+    });
+
     drawFog(camX, camY);
-    drawPings(camX, camY); // draw pings above fog
     drawMiniMap();
     drawUI();
 }
-
 function drawFog(camX, camY) {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(camX-50, camY-50, canvas.width+100, canvas.height+100);
-    
-    // Player vision circle
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(camX - 50, camY - 50, canvas.width + 100, canvas.height + 100);
+
     let grad = ctx.createRadialGradient(
         player.x, player.y, player.radius * 2,
         player.x, player.y, player.radius * 6
@@ -398,110 +413,105 @@ function drawFog(camX, camY) {
     grad.addColorStop(0, 'transparent');
     grad.addColorStop(1, 'rgba(0,0,0,0.7)');
     ctx.fillStyle = grad;
-    ctx.fillRect(camX-50, camY-50, canvas.width+100, canvas.height+100);
-}
+    ctx.fillRect(camX - 50, camY - 50, canvas.width + 100, canvas.height + 100);
 
-// --- NEW DRAW PINGS ---
-function drawPings(camX, camY) {
-    pings.forEach(p => {
-        let t = p.age / p.maxAge;
-        let radius = 60 + t * 300;
-        let alpha = 1 - t;
-        ctx.save();
-        ctx.globalAlpha = alpha * 0.7;
-        ctx.strokeStyle = p.color;
-        ctx.lineWidth = 4 + 8 * (1-t);
+    pings.forEach(ping => {
+        const progress = 1 - (ping.duration / 60);
+        const currentRadius = ping.radius + (ping.maxRadius - ping.radius) * progress;
+        let g = ctx.createRadialGradient(
+            ping.x, ping.y, currentRadius * 0.8,
+            ping.x, ping.y, currentRadius
+        );
+        g.addColorStop(0, `rgba(100,200,255,${ping.alpha * 0.4 * (1-progress)})`);
+        g.addColorStop(1, 'transparent');
+        ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, radius, 0, 2 * Math.PI);
-        ctx.stroke();
-        ctx.restore();
-
-        // Ripple effect (secondary ring)
-        if (t > 0.3 && t < 0.7) {
-            ctx.save();
-            ctx.globalAlpha = alpha * 0.4;
-            ctx.strokeStyle = 'rgba(0,255,255,0.4)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, radius + 20, 0, 2 * Math.PI);
-            ctx.stroke();
-            ctx.restore();
-        }
+        ctx.arc(ping.x, ping.y, currentRadius, 0, 2 * Math.PI);
+        ctx.fill();
     });
 }
 
 function drawMiniMap() {
     const scale = 150 / worldWidth;
-    ctx.setTransform(1,0,0,1,0,0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(canvas.width-160,10,150,150);
+    ctx.fillRect(canvas.width - 160, 10, 150, 150);
     ctx.strokeStyle = 'white';
-    ctx.strokeRect(canvas.width-160,10,150,150);
+    ctx.strokeRect(canvas.width - 160, 10, 150, 150);
 
-    function dot(x,y,color,r=2) {
-        ctx.beginPath(); 
-        ctx.arc(canvas.width-160+x*scale,10+y*scale,r,0,2*Math.PI);
-        ctx.fillStyle = color; 
+    function dot(x, y, color, r = 2) {
+        ctx.beginPath();
+        ctx.arc(canvas.width - 160 + x*scale, 10 + y*scale, r, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
         ctx.fill();
     }
 
-    // Only show poison crystals on minimap!
-    crystals.forEach(c => {
-        if (c.type === 'poison') dot(c.x, c.y, '#aa00ff');
+    aiBlobs.forEach(b => dot(b.x, b.y, b.scaredTimer>0 ? '#ff9999':'#ff0000', b.radius*scale/2));
+    meteors.forEach(m => dot(m.x, m.y, '#ff8800'));
+    storms.forEach(s => dot(s.x, s.y, 'rgba(255,0,0,0.5)', s.radius*scale/4));
+    dot(player.x, player.y, player.poisoned ? '#ff66ff' : 'white', player.radius*scale/2);
+
+    pingTargets.forEach(target => {
+        dot(target.x, target.y, 'rgba(100,200,255,0.8)', 3);
     });
-    aiBlobs.forEach(b => dot(b.x,b.y,b.scaredTimer>0?'#ff9999':'#ff0000',b.radius*scale/2));
-    meteors.forEach(m => dot(m.x,m.y,'#ff8800'));
-    storms.forEach(s => dot(s.x,s.y,'rgba(255,0,0,0.5)',s.radius*scale/4));
-    dot(player.x,player.y,player.poisoned?'#ff66ff':'white',player.radius*scale/2);
 }
 
 function drawUI() {
-    ctx.setTransform(1,0,0,1,0,0);
-    
-    // Health bar with fixed width
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     const healthPercent = Math.min(1, (player.radius - 8) / 32);
     const healthWidth = 200 * healthPercent;
-    
+
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(20, 20, 204, 24);
-    ctx.fillStyle = '#333333';
+    ctx.fillStyle = '#333';
     ctx.fillRect(22, 22, 200, 20);
-    ctx.fillStyle = healthPercent > 0.7 ? '#00ff00' : 
+    ctx.fillStyle = healthPercent > 0.7 ? '#00ff00' :
                    healthPercent > 0.3 ? '#ffff00' : '#ff0000';
     ctx.fillRect(22, 22, healthWidth, 20);
     ctx.strokeStyle = 'white';
     ctx.strokeRect(22, 22, 200, 20);
-    
-    // Status text
-    ctx.font = '16px monospace';
+
+    ctx.font = 'bold 16px monospace';
     ctx.fillStyle = 'white';
     ctx.textAlign = 'left';
-    
-    const shieldText = `Shield: ${player.shield ? 'ON' : 'OFF'}`;
-    const stealthText = `Stealth: ${player.stealth ? 'ON' : 'OFF'}`;
-    const poisonText = `Poison: ${player.poisoned ? 'YES' : 'NO'}`;
-    
-    ctx.fillText(shieldText, 20, 60);
-    ctx.fillText(stealthText, 20, 85);
-    ctx.fillText(poisonText, 20, 110);
-    
-    // Size indicator
-    ctx.fillText(`Size: ${player.radius.toFixed(1)}`, 20, 135);
+
+    ctx.fillText(`Shield: ${player.shield?'ON':'OFF'}`, 20, 60);
+    ctx.fillText(`Stealth: ${player.stealth?'ON':'OFF'}`, 20, 80);
+    ctx.fillText(`Poison: ${player.poisoned?'YES':'NO'}`, 20, 100);
+    ctx.fillText(`Size: ${player.radius.toFixed(1)}`, 20, 120);
+
+    if (player.pingCooldown > 0) {
+        const cd = player.pingCooldown / 60;
+        ctx.fillStyle = 'rgba(100,200,255,0.7)';
+        ctx.fillText(`Ping Cooldown: ${(cd*100).toFixed(0)}%`, 20, 140);
+    }
 }
 
 function endGame() {
-    document.getElementById('gameOver').style.display = 'flex';
     cancelAnimationFrame(animHandle);
-}
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-function restartGame() { 
-    location.reload(); 
+    ctx.font = 'bold 36px monospace';
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 20);
+    ctx.font = '20px monospace';
+    ctx.fillText('Press R to Restart', canvas.width/2, canvas.height/2 + 20);
+
+    window.addEventListener('keydown', function handler(e) {
+        if (e.key.toLowerCase() === 'r') {
+            window.removeEventListener('keydown', handler);
+            location.reload();
+        }
+    });
 }
 
 let animHandle;
-function gameLoop() { 
-    update(); 
-    draw(); 
-    animHandle = requestAnimationFrame(gameLoop); 
+function gameLoop() {
+    update();
+    draw();
+    animHandle = requestAnimationFrame(gameLoop);
 }
 gameLoop();
