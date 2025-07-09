@@ -28,10 +28,14 @@ const player = {
 const keys = {};
 window.addEventListener('keydown', e => {
     keys[e.key.toLowerCase()] = true;
-    if (e.key === ' ' || e.code === 'Space') createPing(player.x, player.y);
+    if ((e.key === ' ' || e.code === 'Space') && !keys['__pinged']) {
+        createPing(player.x, player.y);
+        keys['__pinged'] = true;
+    }
 });
 window.addEventListener('keyup', e => {
     keys[e.key.toLowerCase()] = false;
+    if (e.key === ' ' || e.code === 'Space') keys['__pinged'] = false;
 });
 
 const pings = [];
@@ -279,19 +283,24 @@ function checkCollectCrystals() {
     }
 }
 
-function createPing(x,y) { 
+// --- NEW PING SYSTEM ---
+// Each ping is an expanding, fading, colored ring with a ripple effect
+function createPing(x, y) {
     pings.push({
-        x, y, 
-        radius: 0,
-        alpha: 1
-    }); 
+        x,
+        y,
+        age: 0,
+        maxAge: 60, // frames
+        color: 'rgba(0,255,255,0.6)'
+    });
+    // Optionally, play a ping sound here
+    // new Audio('ping.mp3').play();
 }
 
 function updatePings() {
-    for (let i=pings.length-1; i>=0; i--) {
-        pings[i].radius += 6;
-        pings[i].alpha -= 0.01;
-        if (pings[i].alpha <= 0) pings.splice(i,1);
+    for (let i = pings.length - 1; i >= 0; i--) {
+        pings[i].age++;
+        if (pings[i].age > pings[i].maxAge) pings.splice(i, 1);
     }
 }
 
@@ -372,6 +381,7 @@ function draw() {
     }
 
     drawFog(camX, camY);
+    drawPings(camX, camY); // draw pings above fog
     drawMiniMap();
     drawUI();
 }
@@ -389,16 +399,34 @@ function drawFog(camX, camY) {
     grad.addColorStop(1, 'rgba(0,0,0,0.7)');
     ctx.fillStyle = grad;
     ctx.fillRect(camX-50, camY-50, canvas.width+100, canvas.height+100);
-    
-    // Ping effects
+}
+
+// --- NEW DRAW PINGS ---
+function drawPings(camX, camY) {
     pings.forEach(p => {
-        let g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius);
-        g.addColorStop(0, `rgba(255,255,255,${p.alpha*0.5})`);
-        g.addColorStop(1, 'transparent');
-        ctx.fillStyle = g;
+        let t = p.age / p.maxAge;
+        let radius = 60 + t * 300;
+        let alpha = 1 - t;
+        ctx.save();
+        ctx.globalAlpha = alpha * 0.7;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 4 + 8 * (1-t);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, 2*Math.PI);
-        ctx.fill();
+        ctx.arc(p.x, p.y, radius, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.restore();
+
+        // Ripple effect (secondary ring)
+        if (t > 0.3 && t < 0.7) {
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.4;
+            ctx.strokeStyle = 'rgba(0,255,255,0.4)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, radius + 20, 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.restore();
+        }
     });
 }
 
@@ -417,7 +445,10 @@ function drawMiniMap() {
         ctx.fill();
     }
 
-    crystals.forEach(c => dot(c.x,c.y,c.type==='poison'?'#aa00ff':'#00ff00'));
+    // Only show poison crystals on minimap!
+    crystals.forEach(c => {
+        if (c.type === 'poison') dot(c.x, c.y, '#aa00ff');
+    });
     aiBlobs.forEach(b => dot(b.x,b.y,b.scaredTimer>0?'#ff9999':'#ff0000',b.radius*scale/2));
     meteors.forEach(m => dot(m.x,m.y,'#ff8800'));
     storms.forEach(s => dot(s.x,s.y,'rgba(255,0,0,0.5)',s.radius*scale/4));
