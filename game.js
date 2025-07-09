@@ -498,7 +498,13 @@ function endGame() {
     ctx.textAlign = 'center';
     ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 20);
     ctx.font = '20px monospace';
-    ctx.fillText('Press R to Restart', canvas.width/2, canvas.height/2 + 20);
+    ctx.fillText('Press R or Click Restart', canvas.width/2, canvas.height/2 + 20);
+
+    const restartBtn = document.getElementById('restartButton');
+    if (restartBtn) {
+        restartBtn.style.display = 'block';
+        restartBtn.onclick = () => location.reload();
+    }
 
     window.addEventListener('keydown', function handler(e) {
         if (e.key.toLowerCase() === 'r') {
@@ -507,6 +513,7 @@ function endGame() {
         }
     });
 }
+
 
 let animHandle;
 function gameLoop() {

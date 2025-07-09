@@ -3,14 +3,36 @@
 <head>
     <meta charset="UTF-8" />
     <title>Advanced IO Game</title>
-    <link rel="stylesheet" href="style.css">
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        #restartButton {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            padding: 12px 28px;
+            display: none;
+            background: #222;
+            color: #fff;
+            border: 2px solid #fff;
+            border-radius: 8px;
+            cursor: pointer;
+            z-index: 1000;
+        }
+    </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
-    <div id="gameOver" style="display:none;">
-        <h1>Game Over</h1>
-        <button onclick="restartGame()">Restart</button>
-    </div>
+    <button id="restartButton">Restart</button>
     <script src="game.js"></script>
 </body>
 </html>
